@@ -1,3 +1,30 @@
+function isValidName(name) {
+    const nameRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ ]+$/;
+    return nameRegex.test(name);
+}
+
+function isValidDate(dateString) {
+    const [day, month] = dateString.split('/').map(Number);
+    const year = new Date().getFullYear();
+    const date = new Date(year, month - 1, day);
+
+    if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+        return false;
+    }
+
+    const today = new Date();
+    if (date < today) {
+        return false;
+    }
+
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+        return false;
+    }
+
+    return true;
+}
+
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -54,8 +81,8 @@ client.on('auth_failure', msg => {
 client.on("message", async (message) => {
     try {
         const content = message.body.toLowerCase();
-        const from = message.from;''
-        const footer = "\n\n`As mensagens enviadas pelo atendimento não representa a versão final do sistema.`";
+        const from = message.from;
+        const footer = "\n\n> As mensagens enviadas pelo atendimento não representam a versão final do sistema.";
         console.log(`Recebendo mensagem de ${from}: ${content}`);
 
         if (!currentStep[from]) {
@@ -83,6 +110,11 @@ client.on("message", async (message) => {
                 break;
             
             case 'name':
+                if (!isValidName(content)) {
+                    client.sendMessage(from, "Nome inválido. Por favor, digite um nome que contenha apenas letras e espaços." + footer);
+                    console.log(`Nome inválido recebido de ${from}: ${content}`);
+                    break;
+                }
                 patientData[from] = { name: content };
                 currentStep[from] = 'exam';
                 const examsList = availableExams.map((exam, index) => `${index + 1}. ${exam.name}`).join('\n');
@@ -93,9 +125,15 @@ client.on("message", async (message) => {
             case 'exam':
                 const selectedExamIndex = parseInt(content) - 1;
                 if (selectedExamIndex >= 0 && selectedExamIndex < availableExams.length) {
-                    patientData[from].exam = availableExams[selectedExamIndex].name;
-                    currentStep[from] = 'date';
-                    client.sendMessage(from, "Por favor, digite a *data do exame* (no formato DD/MM/AAAA) 📅" + footer);
+                    patientData[from] = { ...patientData[from], exam: availableExams[selectedExamIndex].name };
+
+                    if (patientData[from].exam === "Ultrassom") {
+                        currentStep[from] = 'ultrasound_type';
+                        client.sendMessage(from, "Por favor, informe se é um *Ultrassom de Abdômen*.\n1. Sim\n2. Não" + footer);
+                    } else {
+                        currentStep[from] = 'date';
+                        client.sendMessage(from, "Por favor, digite a data do exame no formato dia/mês (ex: 15/08). 📅" + footer);
+                    }
                     console.log(`Tipo de exame selecionado por ${from}: ${patientData[from].exam}`);
                 } else {
                     client.sendMessage(from, "Opção de exame inválida. Por favor, responda com o número do exame desejado." + footer);
@@ -103,10 +141,38 @@ client.on("message", async (message) => {
                 }
                 break;
 
+            case 'ultrasound_type':
+                if (content === '1') {
+                    client.sendMessage(from, "⚠️ Atenção: Para realizar o Ultrassom do Abdômen, o paciente deve estar em jejum." + footer);
+                    patientData[from] = { ...patientData[from], ultrasoundType: 'Abdômen' };
+                    currentStep[from] = 'date';
+                    client.sendMessage(from, "Por favor, digite a data do exame no formato dia/mês (ex: 15/08). 📅" + footer);
+                    console.log(`Ultrassom de Abdômen selecionado por ${from}`);
+                } else if (content === '2') {
+                    patientData[from] = { ...patientData[from], ultrasoundType: 'Outro' };
+                    currentStep[from] = 'date';
+                    client.sendMessage(from, "Por favor, digite a data do exame no formato dia/mês (ex: 15/08). 📅" + footer);
+                    console.log(`Outro tipo de Ultrassom selecionado por ${from}`);
+                } else {
+                    client.sendMessage(from, "Opção inválida. Por favor, responda com '1' para Sim ou '2' para Não." + footer);
+                    console.log(`Opção inválida de tipo de ultrassom recebida de ${from}: ${content}`);
+                }
+                break;
+
             case 'date':
+                if (!isValidDate(content)) {
+                    client.sendMessage(from, "Data inválida. Por favor, digite uma data válida no formato dia/mês (ex: 15/08) que não seja uma data passada, sábado ou domingo." + footer);
+                    console.log(`Data inválida recebida de ${from}: ${content}`);
+                    break;
+                }
                 patientData[from].date = content;
                 currentStep[from] = 'plan';
-                client.sendMessage(from, `Por favor, informe se possui algum *plano de saúde*. Digite:\n1. CASSI\n2. Bradesco\n3. Unimed\n4. IPASGO\n5. Nenhum plano de saúde` + footer);
+                
+                // Ajuste aqui para remover a opção Bradesco se o exame for Tomografia das Coronárias
+                const availablePlans = patientData[from].exam === "Tomografia das Coronárias" ? acceptedPlans.filter(plan => plan !== "Bradesco") : acceptedPlans;
+                const plansList = availablePlans.map((plan, index) => `${index + 1}. ${plan}`).join('\n');
+                
+                client.sendMessage(from, `Por favor, informe se possui algum *plano de saúde*. Digite:\n${plansList}\n${availablePlans.length + 1}. Nenhum plano de saúde` + footer);
                 console.log(`Data do exame recebida de ${from}: ${content}`);
                 break;
 
@@ -127,6 +193,11 @@ client.on("message", async (message) => {
                         const coronaryCTList = coronaryCTSlots.map((slot, index) => `${index + 1}. ${slot}`).join('\n');
                         client.sendMessage(from, `Escolha um horário disponível:\n\n${coronaryCTList}\n\nResponda com o número do horário desejado.` + footer);
                         console.log(`Lista de horários para Tomografia das Coronárias enviada para ${from}`);
+                    } else if (patientData[from].exam === 'Ultrassom' && patientData[from].ultrasoundType === 'Abdômen') {
+                        currentStep[from] = 'time';
+                        const morningList = morningSlots.map((slot, index) => `${index + 1}. ${slot}`).join('\n');
+                        client.sendMessage(from, `Escolha um horário disponível para o Ultrassom de Abdômen:\n\n${morningList}\n\nResponda com o número do horário desejado.` + footer);
+                        console.log(`Lista de horários da manhã para Ultrassom de Abdômen enviada para ${from}`);
                     } else {
                         currentStep[from] = 'period';
                         client.sendMessage(from, "Por favor, escolha um período:\n1. 🌅 *Manhã*\n2. 🌇 *Tarde*" + footer);
@@ -160,7 +231,6 @@ client.on("message", async (message) => {
 
             case 'time':
                 const selectedTimeIndex = parseInt(content) - 1;
-                let period = patientData[from].period;
 
                 if (patientData[from].exam === 'Tomografia das Coronárias') {
                     if (selectedTimeIndex >= 0 && selectedTimeIndex < coronaryCTSlots.length) {
@@ -170,10 +240,18 @@ client.on("message", async (message) => {
                         console.log(`Horário inválido recebido de ${from}: ${content}`);
                         break;
                     }
-                } else {
-                    if (period === 'morning' && selectedTimeIndex >= 0 && selectedTimeIndex < morningSlots.length) {
+                } else if (patientData[from].exam === 'Ultrassom' && patientData[from].ultrasoundType === 'Abdômen') {
+                    if (selectedTimeIndex >= 0 && selectedTimeIndex < morningSlots.length) {
                         patientData[from].time = morningSlots[selectedTimeIndex];
-                    } else if (period === 'afternoon' && selectedTimeIndex >= 0 && selectedTimeIndex < afternoonSlots.length) {
+                    } else {
+                        client.sendMessage(from, "Horário inválido. Por favor, responda com o número do horário desejado." + footer);
+                        console.log(`Horário inválido recebido de ${from}: ${content}`);
+                        break;
+                    }
+                } else {
+                    if (patientData[from].period === 'morning' && selectedTimeIndex >= 0 && selectedTimeIndex < morningSlots.length) {
+                        patientData[from].time = morningSlots[selectedTimeIndex];
+                    } else if (patientData[from].period === 'afternoon' && selectedTimeIndex >= 0 && selectedTimeIndex < afternoonSlots.length) {
                         patientData[from].time = afternoonSlots[selectedTimeIndex];
                     } else {
                         client.sendMessage(from, "Horário inválido. Por favor, responda com o número do horário desejado." + footer);
@@ -192,7 +270,21 @@ client.on("message", async (message) => {
 
             case 'confirmation':
                 if (content === 'confirmar') {
+                    const eventTitle = encodeURIComponent(`Agendamento de ${patientData[from].exam}`);
+                    const eventDetails = encodeURIComponent(`Paciente: ${patientData[from].name}`);
+                    const eventLocation = encodeURIComponent("Clínica de Saúde");
+                    const [day, month] = patientData[from].date.split('/');
+                    const year = new Date().getFullYear();
+                    const eventDate = new Date(year, month - 1, day);
+                    const startTime = patientData[from].time.replace(':', '');
+                    const endTime = (parseInt(patientData[from].time.replace(':', '')) + 100).toString().padStart(4, '0');
+                    const startDateTime = `${year}${month}${day}T${startTime}00Z`;
+                    const endDateTime = `${year}${month}${day}T${endTime}00Z`;
+                    const googleCalendarUrl = `https://www.google.com/calendar/render?action=TEMPLATE&text=${eventTitle}&details=${eventDetails}&location=${eventLocation}&dates=${startDateTime}/${endDateTime}`;
+                    
                     client.sendMessage(from, "✅ *Agendamento confirmado!* Obrigado." + footer);
+                    client.sendMessage(from, `Deseja adicionar o compromisso à sua agenda do Google? Clique no link abaixo:\n${googleCalendarUrl}`);
+                    
                     console.log(`Agendamento confirmado por ${from}`);
                     delete currentStep[from];
                     delete patientData[from];
