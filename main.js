@@ -41,6 +41,7 @@ const client = new Client({
 
 let currentStep = {};
 let patientData = {};
+let timeoutHandles = {};  // Armazena os timeouts de cada paciente
 
 const morningSlots = ["08:00", "08:10", "08:20", "08:30", "08:40", "09:00", "09:10", "09:20", "09:30", "09:40", "10:00", "10:10", "10:20", "10:30", "10:40"];
 const afternoonSlots = ["13:00", "13:15", "13:30", "13:45", "14:00", "14:15", "14:30", "14:45", "15:00", "15:15", "15:30", "15:45", "16:00", "16:15", "16:30", "16:45"];
@@ -78,12 +79,28 @@ client.on('auth_failure', msg => {
     console.error('AUTHENTICATION FAILURE', msg);
 });
 
+function resetTimeout(from, footer) {
+    if (timeoutHandles[from]) {
+        clearTimeout(timeoutHandles[from]);
+    }
+    timeoutHandles[from] = setTimeout(() => {
+        client.sendMessage(from, "A sessão foi encerrada devido à inatividade. Caso queira tentar novamente, digite '1' para agendar." + footer);
+        delete currentStep[from];
+        delete patientData[from];
+        delete timeoutHandles[from];
+        console.log(`Sessão encerrada por inatividade para ${from}`);
+    }, 90 * 1000); // 90 segundos
+}
+
 client.on("message", async (message) => {
     try {
         const content = message.body.toLowerCase();
         const from = message.from;
         const footer = "\n\n> As mensagens enviadas pelo atendimento não representam a versão final do sistema.";
         console.log(`Recebendo mensagem de ${from}: ${content}`);
+
+        // Reseta o timeout toda vez que uma nova mensagem é recebida
+        resetTimeout(from, footer);
 
         if (!currentStep[from]) {
             currentStep[from] = 'welcome';
@@ -288,11 +305,15 @@ client.on("message", async (message) => {
                     console.log(`Agendamento confirmado por ${from}`);
                     delete currentStep[from];
                     delete patientData[from];
+                    clearTimeout(timeoutHandles[from]);
+                    delete timeoutHandles[from];
                 } else if (content === 'cancelar') {
                     client.sendMessage(from, "Agendamento cancelado. Caso queira tentar novamente, digite '1' para agendar." + footer);
                     console.log(`Agendamento cancelado por ${from}`);
                     delete currentStep[from];
                     delete patientData[from];
+                    clearTimeout(timeoutHandles[from]);
+                    delete timeoutHandles[from];
                 } else {
                     client.sendMessage(from, "Resposta inválida. Digite *'confirmar'* para confirmar ou *'cancelar'* para cancelar." + footer);
                     console.log(`Resposta inválida de ${from}: ${content}`);
@@ -304,6 +325,8 @@ client.on("message", async (message) => {
                 console.error(`Erro no estado ${currentStep[from]} de ${from}`);
                 delete currentStep[from];
                 delete patientData[from];
+                clearTimeout(timeoutHandles[from]);
+                delete timeoutHandles[from];
                 break;
         }
     } catch (error) {
