@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+model Received {
+  id             String   @id @default(uuid())
+  from           String
+  receivedDate   DateTime @default(now())
+  messageBody    String
+  contactName    String?
+  phoneNumberId  String
+  replyToId      String?  @map("reply_to_id")
+  messageType    String   // Alterado de MessageType para String
+}
+
+model Send {
+  id              String   @id @default(uuid())
+  to              String
+  sentDate        DateTime @default(now())
+  messageBody     String
+  status          String
+  messagingProduct String
+  replyToId       String?  @map("reply_to_id")
+  messageType     String   // Alterado de MessageType para String
+}
